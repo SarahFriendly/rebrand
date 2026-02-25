@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>flocks</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; }
+canvas { display:block; }
+#ui {
+  position:fixed; top:0; left:0; right:0; height:36px;
+  display:flex; align-items:center; padding:0 16px; gap:16px;
+  background:rgba(238,233,222,0.97); font:13px system-ui; z-index:10;
+}
+.tab { cursor:pointer; color:#aaa; background:none; border:none; font:inherit; padding:0; }
+.tab.on { color:#111; text-decoration:underline; text-underline-offset:3px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// Boids simulation — CPU with spatial grid, ~2000 particles
+// Tuned to match the reference: wide organic cloud, hollow center, stays together
+
+const MODES = {
+  a: { 
+    n:2000, // number of boids/particles
+
+    // Boid behaviour parameters
+    sep:50, // Separation - how much they want to avoid crowding neighbors
+    ali:80, // Alignment - how much they want to match velocity with neighbors
+    coh:60, // Cohesion - how much they want to move toward the average position of neighbors
+    
+    // Initial speed along ellipse (creates natural rotation/flow)
+    speed:0.5,
+    
+    // Center gravity & avoidance — pull and push away from very center (creates overall cohesion)
+    gravityStr: 400, // strength of pull toward center (creates overall cohesion)
+    avoidR: 500, // radius of center avoidance
+    avoidStr: 0.00001 // strength of center avoidance
+},
+};
+
+let mode = MODES.a;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H, cx, cy;
+let boids = [];
+let mouse = {x:-9999, y:-9999};
+
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  cx = W/2; cy = H/2;
+}
+resize();
+window.addEventListener('resize', resize);
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - r.left;
+  mouse.y = e.clientY - r.top;
+});
+canvas.addEventListener('mouseleave', () => { mouse.x = -9999; mouse.y = -9999; });
+
+// Initialize boids in a wide flat ellipse matching the reference shape
+function init() {
+  boids = [];
+  const n = mode.n;
+  for (let i = 0; i < n; i++) {
+    // Place on a hollow ellipse ring with scatter — matches reference shape
+    const angle = Math.random() * Math.PI * 2;
+    // Vary radius: mostly at 0.5–1.0 of max radius (hollow center)
+    const t = 0.4 + Math.random() * 0.6; 
+    const rx = W * 0.22 * t;  // wide
+    const ry = H * 0.18 * t;  // less tall
+    const scatter = (Math.random() - 0.5) * 1000; // large scatter to break up uniformity
+    const x = cx + Math.cos(angle) * rx + scatter;
+    const y = cy + Math.sin(angle) * ry + scatter * 0.5;
+    // Velocity tangent to the ellipse (creates natural rotation/flow)
+    const spd = (0.5 + Math.random()) * mode.speed;
+    const vx = -Math.sin(angle) * spd + (Math.random()-0.5)*100;
+    const vy =  Math.cos(angle) * spd * 0.6 + (Math.random()-0.5)*100;
+    boids.push({x, y, vx, vy});
+  }
+}
+init();
+
+// Spatial grid for O(n) neighbour lookup
+const CELL = 100;
+let grid = {};
+
+function buildGrid() {
+  grid = {};
+  for (let i = 0; i < boids.length; i++) {
+    const b = boids[i];
+    const key = `${Math.floor(b.x/CELL)},${Math.floor(b.y/CELL)}`;
+    if (!grid[key]) grid[key] = [];
+    grid[key].push(i);
+  }
+}
+
+function getNeighbours(b, radius) {
+  const result = [];
+  const r = Math.ceil(radius/CELL);
+  const gx = Math.floor(b.x/CELL);
+  const gy = Math.floor(b.y/CELL);
+  for (let dx = -r; dx <= r; dx++) {
+    for (let dy = -r; dy <= r; dy++) {
+      const cell = grid[`${gx+dx},${gy+dy}`];
+      if (cell) for (const i of cell) result.push(i);
+    }
+  }
+  return result;
+}
+
+function update() {
+  buildGrid();
+  const SEP = mode.sep, ALI = mode.ali, COH = mode.coh;
+  const MAXSPD = mode.speed * 2.5;
+  const dt = 1;
+
+  for (let i = 0; i < boids.length; i++) {
+    const b = boids[i];
+    let vx = b.vx, vy = b.vy;
+
+    // Gravity toward center — Y stretched like source (Pe.y *= 2.5)
+    const gx = b.x - cx, gy = (b.y - cy) * 2.5;
+    const gl = Math.sqrt(gx*gx + gy*gy) || 1;
+    vx -= (gx/gl) * 0.05;
+    vy -= (gy/gl) * 0.05;
+
+    // Mouse repulsion
+    const mdx = b.x - mouse.x, mdy = b.y - mouse.y;
+    const md2 = mdx*mdx + mdy*mdy;
+    if (md2 < 120*120 && md2 > 0.01) {
+      const md = Math.sqrt(md2);
+      const str = (1 - md/120) * 3;
+      vx += (mdx/md) * str;
+      vy += (mdy/md) * str;
+    }
+
+    // Boid neighbours
+    const neighbours = getNeighbours(b, COH);
+    let sx=0,sy=0, ax=0,ay=0, cx2=0,cy2=0, sepN=0,aliN=0,cohN=0;
+
+    for (const j of neighbours) {
+      if (j === i) continue;
+      const o = boids[j];
+      const dx = o.x - b.x, dy = o.y - b.y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 < 0.01) continue;
+      const d = Math.sqrt(d2);
+
+      if (d < SEP) {
+        // Separation
+        sx -= dx/d; sy -= dy/d;
+        sepN++;
+      } else if (d < ALI) {
+        // Alignment
+        const ol = Math.sqrt(o.vx*o.vx + o.vy*o.vy) || 1;
+        ax += o.vx/ol; ay += o.vy/ol;
+        aliN++;
+      } else if (d < COH) {
+        // Cohesion
+        cx2 += o.x; cy2 += o.y;
+        cohN++;
+      }
+    }
+
+    if (sepN > 0) { vx += sx/sepN * 0.15; vy += sy/sepN * 0.15; }
+    if (aliN > 0) { vx += ax/aliN * 0.08; vy += ay/aliN * 0.08; }
+    if (cohN > 0) {
+      const tx = cx2/cohN - b.x, ty = cy2/cohN - b.y;
+      const tl = Math.sqrt(tx*tx+ty*ty)||1;
+      vx += tx/tl * 0.04;
+      vy += ty/tl * 0.04;
+    }
+
+    // Center avoidance — push away from very center (creates hollow)
+    const cdx = b.x - cx, cdy = b.y - cy;
+    const cd = Math.sqrt(cdx*cdx + cdy*cdy) || 1;
+    if (cd < mode.avoidR) {
+      const str = Math.pow(1 - cd/mode.avoidR, 2) * mode.avoidStr;
+      vx += (cdx/cd) * str * mode.gravityStr;
+      vy += (cdy/cd) * str * mode.gravityStr;
+    }
+
+    // Speed clamp
+    const spd = Math.sqrt(vx*vx + vy*vy);
+    if (spd > MAXSPD) { vx = vx/spd*MAXSPD; vy = vy/spd*MAXSPD; }
+    if (spd < 0.2) { vx *= 1.05; vy *= 1.05; } // minimum speed
+
+    b.vx = vx; b.vy = vy;
+    b.x += vx; b.y += vy;
+  }
+}
+
+function draw() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  // Draw all dots in one batch
+  ctx.fillStyle = 'rgba(216,216,216,0.85)';
+  ctx.beginPath();
+  for (const b of boids) {
+    ctx.moveTo(b.x + 1, b.y);
+    ctx.arc(b.x, b.y, 1, 0, Math.PI*2);
+  }
+  ctx.fill();
+}
+
+function loop() {
+  requestAnimationFrame(loop);
+  update();
+  draw();
+}
+loop();
+
+function setMode(m) {
+  mode = MODES[m];
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('on', ['a','b'][i]===m));
+  init();
+}
+</script>
+</body>
+</html>
