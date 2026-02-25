@@ -7,62 +7,35 @@
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:#000; overflow:hidden; cursor:none; }
 canvas { display:block; }
-#ui {
-  position:fixed; top:0; left:0; right:0; height:36px;
-  display:flex; align-items:center; padding:0 16px; gap:16px;
-  background:rgba(238,233,222,0.97); font:13px system-ui; z-index:10;
-}
-.tab { cursor:pointer; color:#aaa; background:none; border:none; font:inherit; padding:0; }
-.tab.on { color:#111; text-decoration:underline; text-underline-offset:3px; }
 </style>
 </head>
 <body>
-<div id="ui">
-  <button class="tab on" onclick="setMode('a')">flocks-a</button>
-  <button class="tab"    onclick="setMode('b')">flocks-b</button>
-</div>
 <canvas id="c"></canvas>
 <script>
 
 const MODES = {
   a: {
-    n:          4000,
+    n:          10000,
     radius:     0.33,
-    spinSpd:    0.0013,
-    pushStr:    0.012,
-    pushFalloff:3.0,
-    hoverR:     200,
-    flowStr:    0.0014,
-    flowScale:  0.018,
-    flowSpeed:  0.00030,
-    springK:    0.008,
-    springD:    0.97,
-    dragSens:   0.007,
-    inertiaDamp:0.92,
-    frontAlpha: 0.95,
-    backAlpha:  0.62,
-    frontSize:  1.7,
-    backSize:   1.1,
-  },
-  b: {
-    n:          4000,
-    radius:     0.35,
-    spinSpd:    0.0009,
-    pushStr:    0.011,
-    pushFalloff:3.0,
-    hoverR:     220,
-    flowStr:    0.0013,
-    flowScale:  0.016,
-    flowSpeed:  0.00025,
-    springK:    0.007,
-    springD:    0.97,
-    dragSens:   0.008,
-    inertiaDamp:0.91,
-    frontAlpha: 0.92,
-    backAlpha:  0.58,
-    frontSize:  1.9,
-    backSize:   1.1,
-  },
+    spinSpd:    0.0025,
+    // Hover: gentle continuous drift, not a blast
+    pushStr:    0.020,   // overall strength of push from mouse
+    pushFalloff:2.0,   // how quickly push strength falls off with distance (higher = more focused)
+    hoverR:     600,      // large radius — wide soft influence zone
+    flowStr:    0.005,   // how strongly particles follow the flow
+    flowScale:  0.002,   // spatial frequency of the flow field (higher = more turbulent)
+    flowSpeed:  0.005,  // how fast the flow field evolves over time
+    springK:    0.005,   // how strongly particles are pulled back to their original position
+    springD:    0.950,    // velocity damping when pulled back to original position
+    // Drag
+    dragSens:   0.01, // how much dragging affects rotation velocity
+    inertiaDamp:0.0, // no inertia — dragging directly sets rotation velocity, which stops immediately when you release
+    // Visual
+    frontAlpha: 0.99,
+    backAlpha:  0.99,
+    frontSize:  1.0,
+    backSize:   0.5,
+  }
 };
 
 let M = MODES.a;
@@ -89,8 +62,7 @@ function alloc(n) {
 
 function resize() {
   W=canvas.width=window.innerWidth;
-  H=canvas.height=window.innerHeight-36;
-  canvas.style.marginTop='36px';
+  H=canvas.height=window.innerHeight;
   CX=W/2; CY=H/2;
   R=Math.min(W,H)*M.radius;
 }
@@ -229,7 +201,7 @@ function draw() {
     const bDist=Math.sqrt(BX[i]*BX[i]+BY[i]*BY[i]+BZ[i]*BZ[i]);
     const fade=bDist>1.05?Math.max(0.08,1-(bDist-1.05)*0.7):1.0;
     ctx.globalAlpha=(bA+(fA-bA)*t)*fade;
-    ctx.fillStyle=t<0.5?'#9aaebb':'#d8d8d8';
+    ctx.fillStyle=t<0.5?'#FF00BB':'#ffffff';
     const sz=(bSz+(fSz-bSz)*t*PSZ[i])*Math.min(1,fade+0.3);
     ctx.fillRect(SX_t[i]-sz*0.5, SY_t[i]-sz*0.5, sz, sz);
   }
@@ -239,13 +211,6 @@ function draw() {
 function loop(){ requestAnimationFrame(loop); update(); draw(); }
 init(); loop();
 
-function setMode(m){
-  M=MODES[m];
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',['a','b'][i]===m));
-  R=Math.min(W,H)*M.radius;
-  rotY=rotX=rotYVel=rotXVel=0;
-  init();
-}
 </script>
 </body>
 </html>
