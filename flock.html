@@ -27,17 +27,17 @@ const MODES = {
     n:2000, // number of boids/particles
 
     // Boid behaviour parameters
-    sep:50, // Separation - how much they want to avoid crowding neighbors
-    ali:80, // Alignment - how much they want to match velocity with neighbors
-    coh:60, // Cohesion - how much they want to move toward the average position of neighbors
+    sep:15, // Separation - how much they want to avoid crowding neighbors
+    ali:70, // Alignment - how much they want to match velocity with neighbors
+    coh:1, // Cohesion - how much they want to move toward the average position of neighbors
     
     // Initial speed along ellipse (creates natural rotation/flow)
-    speed:0.5,
+    speed:0.8,
     
     // Center gravity & avoidance — pull and push away from very center (creates overall cohesion)
-    gravityStr: 400, // strength of pull toward center (creates overall cohesion)
-    avoidR: 500, // radius of center avoidance
-    avoidStr: 0.00001 // strength of center avoidance
+    gravityStr: 100, // strength of pull toward center (creates overall cohesion)
+    avoidR: 800, // radius of center avoidance
+    avoidStr: 0.0001 // strength of center avoidance
 },
 };
 
@@ -201,11 +201,11 @@ function draw() {
   ctx.fillRect(0, 0, W, H);
 
   // Draw all dots in one batch
-  ctx.fillStyle = 'rgba(216,216,216,0.85)';
+  ctx.fillStyle = 'rgba(255,255,255,1.0)';
   ctx.beginPath();
   for (const b of boids) {
     ctx.moveTo(b.x + 1, b.y);
-    ctx.arc(b.x, b.y, 1, 0, Math.PI*2);
+    ctx.arc(b.x, b.y, 1.5, 0, Math.PI*2);
   }
   ctx.fill();
 }
