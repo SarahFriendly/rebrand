@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>flocks</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; cursor:none; }
+canvas { display:block; }
+#ui {
+  position:fixed; top:0; left:0; right:0; height:36px;
+  display:flex; align-items:center; padding:0 16px; gap:16px;
+  background:rgba(238,233,222,0.97); font:13px system-ui; z-index:10;
+}
+.tab { cursor:pointer; color:#aaa; background:none; border:none; font:inherit; padding:0; }
+.tab.on { color:#111; text-decoration:underline; text-underline-offset:3px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <button class="tab on" onclick="setMode('a')">flocks-a</button>
+  <button class="tab"    onclick="setMode('b')">flocks-b</button>
+</div>
+<canvas id="c"></canvas>
+<script>
+
+const MODES = {
+  a: {
+    n:          4000,
+    radius:     0.33,
+    spinSpd:    0.0013,
+    pushStr:    0.012,
+    pushFalloff:3.0,
+    hoverR:     200,
+    flowStr:    0.0014,
+    flowScale:  0.018,
+    flowSpeed:  0.00030,
+    springK:    0.008,
+    springD:    0.97,
+    dragSens:   0.007,
+    inertiaDamp:0.92,
+    frontAlpha: 0.95,
+    backAlpha:  0.62,
+    frontSize:  1.7,
+    backSize:   1.1,
+  },
+  b: {
+    n:          4000,
+    radius:     0.35,
+    spinSpd:    0.0009,
+    pushStr:    0.011,
+    pushFalloff:3.0,
+    hoverR:     220,
+    flowStr:    0.0013,
+    flowScale:  0.016,
+    flowSpeed:  0.00025,
+    springK:    0.007,
+    springD:    0.97,
+    dragSens:   0.008,
+    inertiaDamp:0.91,
+    frontAlpha: 0.92,
+    backAlpha:  0.58,
+    frontSize:  1.9,
+    backSize:   1.1,
+  },
+};
+
+let M = MODES.a;
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+let W=0, H=0, CX=0, CY=0, R=0;
+
+let BX, BY, BZ;
+let DX, DY, DZ;
+let DVX, DVY, DVZ;
+let PHX, PHY, PHZ;
+let PSZ;
+let SX_t, SY_t, SZ_t, ORD;
+
+function alloc(n) {
+  BX=new Float32Array(n); BY=new Float32Array(n); BZ=new Float32Array(n);
+  DX=new Float32Array(n); DY=new Float32Array(n); DZ=new Float32Array(n);
+  DVX=new Float32Array(n);DVY=new Float32Array(n);DVZ=new Float32Array(n);
+  PHX=new Float32Array(n);PHY=new Float32Array(n);PHZ=new Float32Array(n);
+  PSZ=new Uint8Array(n);
+  SX_t=new Float32Array(n); SY_t=new Float32Array(n);
+  SZ_t=new Float32Array(n); ORD=new Int32Array(n);
+}
+
+function resize() {
+  W=canvas.width=window.innerWidth;
+  H=canvas.height=window.innerHeight-36;
+  canvas.style.marginTop='36px';
+  CX=W/2; CY=H/2;
+  R=Math.min(W,H)*M.radius;
+}
+resize();
+window.addEventListener('resize', ()=>{ resize(); });
+
+const mouse={x:-9999,y:-9999};
+let dragging=false, lastMX=0, lastMY=0;
+let rotY=0, rotX=0, rotYVel=0, rotXVel=0;
+let tick=0;
+
+canvas.addEventListener('mousedown',  e=>{ dragging=true; rotYVel=rotXVel=0; const r=canvas.getBoundingClientRect(); lastMX=e.clientX-r.left; lastMY=e.clientY-r.top; });
+canvas.addEventListener('mouseup',    ()=>{ dragging=false; });
+canvas.addEventListener('mouseleave', ()=>{ mouse.x=-9999; mouse.y=-9999; dragging=false; });
+canvas.addEventListener('mousemove',  e=>{
+  const r=canvas.getBoundingClientRect();
+  const mx=e.clientX-r.left, my=e.clientY-r.top;
+  if (dragging) { rotYVel=(mx-lastMX)*M.dragSens; rotXVel=(my-lastMY)*M.dragSens; rotY+=rotYVel; rotX+=rotXVel; }
+  lastMX=mouse.x=mx; lastMY=mouse.y=my;
+});
+canvas.addEventListener('touchstart', e=>{ e.preventDefault(); const r=canvas.getBoundingClientRect(); lastMX=mouse.x=e.touches[0].clientX-r.left; lastMY=mouse.y=e.touches[0].clientY-r.top; dragging=true; rotYVel=rotXVel=0; },{passive:false});
+canvas.addEventListener('touchmove',  e=>{
+  e.preventDefault(); const r=canvas.getBoundingClientRect();
+  const mx=e.touches[0].clientX-r.left, my=e.touches[0].clientY-r.top;
+  if(dragging){ rotYVel=(mx-lastMX)*M.dragSens; rotXVel=(my-lastMY)*M.dragSens; rotY+=rotYVel; rotX+=rotXVel; }
+  lastMX=mouse.x=mx; lastMY=mouse.y=my;
+},{passive:false});
+canvas.addEventListener('touchend', ()=>{ dragging=false; });
+
+// pole-biased distribution — denser at top/bottom
+function poleBiasedY() {
+  while (true) {
+    const by = Math.random() * 2 - 1;
+    if (Math.random() < 0.06 + Math.pow(Math.abs(by), 3.3)) return by;
+  }
+}
+
+function init() {
+  const n=M.n;
+  alloc(n);
+  R=Math.min(W,H)*M.radius;
+
+  for (let i=0;i<n;i++) {
+    if (Math.random() < 0.09) {
+      // stray particles outside the sphere
+      let x, y, s;
+      do { x=Math.random()*2-1; y=Math.random()*2-1; s=x*x+y*y; } while(s>=1||s===0);
+      const f=2*Math.sqrt(1-s);
+      const dist=1.12+Math.random()*1.1;
+      BX[i]=x*f*dist; BY[i]=y*f*dist; BZ[i]=(1-2*s)*dist;
+    } else {
+      const by=poleBiasedY();
+      const cosLat=Math.sqrt(1-by*by);
+      const lon=Math.random()*Math.PI*2;
+      BX[i]=Math.cos(lon)*cosLat;
+      BY[i]=by;
+      BZ[i]=Math.sin(lon)*cosLat;
+    }
+
+    DX[i]=DY[i]=DZ[i]=0;
+    DVX[i]=DVY[i]=DVZ[i]=0;
+    PHX[i]=Math.random()*Math.PI*2;
+    PHY[i]=Math.random()*Math.PI*2;
+    PHZ[i]=Math.random()*Math.PI*2;
+    PSZ[i]=Math.random()<0.84?1:2;
+  }
+}
+
+function ry(x,y,z,a){ const c=Math.cos(a),s=Math.sin(a); return[c*x+s*z,y,-s*x+c*z]; }
+function rx(x,y,z,a){ const c=Math.cos(a),s=Math.sin(a); return[x,c*y-s*z,s*y+c*z]; }
+
+function update() {
+  const n=M.n;
+  tick++;
+  if (!dragging) { rotYVel*=M.inertiaDamp; rotXVel*=M.inertiaDamp; rotY+=M.spinSpd+rotYVel; rotX+=rotXVel; }
+  rotX=Math.max(-0.5,Math.min(0.5,rotX));
+
+  const{pushStr,springK,springD,hoverR,flowStr,flowScale,flowSpeed}=M;
+  const MR2=hoverR*hoverR;
+
+  for (let i=0;i<n;i++) {
+    const wx=BX[i]+DX[i], wy=BY[i]+DY[i], wz=BZ[i]+DZ[i];
+    let[rx2,ry2,rz2]=ry(wx,wy,wz,rotY);
+    [rx2,ry2,rz2]=rx(rx2,ry2,rz2,rotX);
+    const sx=CX+rx2*R, sy=CY+ry2*R;
+    SX_t[i]=sx; SY_t[i]=sy; SZ_t[i]=rz2;
+
+    if (mouse.x > -999) {
+      const mdx=sx-mouse.x, mdy=sy-mouse.y, md2=mdx*mdx+mdy*mdy;
+      if (md2<MR2&&md2>0.01) {
+        const md=Math.sqrt(md2), norm=1-md/hoverR;
+        const t=norm*norm*norm*pushStr;
+        const px2=mdx/md*t, py2=mdy/md*t;
+        let[px,py,pz]=rx(px2,py2,0,-rotX);
+        [px,py,pz]=ry(px,py,pz,-rotY);
+        const dot=px*BX[i]+py*BY[i]+pz*BZ[i];
+        DVX[i]+=(px-dot*BX[i]);
+        DVY[i]+=(py-dot*BY[i]);
+        DVZ[i]+=(pz-dot*BZ[i]);
+      }
+    }
+
+    const dMag2=DX[i]*DX[i]+DY[i]*DY[i]+DZ[i]*DZ[i];
+    if (dMag2>0.28*0.28){ const sc=0.28/Math.sqrt(dMag2); DX[i]*=sc;DY[i]*=sc;DZ[i]*=sc; }
+
+    const t2=tick*flowSpeed;
+    const fpx=BX[i]*flowScale, fpy=BY[i]*flowScale, fpz=BZ[i]*flowScale;
+    const fx=Math.sin(fpy*3.1+t2*1.7+PHX[i])*Math.cos(fpz*2.3+t2*0.9);
+    const fy=Math.sin(fpz*2.7+t2*1.3+PHY[i])*Math.cos(fpx*3.7+t2*1.1);
+    const fz=Math.sin(fpx*3.3+t2*0.8+PHZ[i])*Math.cos(fpy*2.1+t2*1.5);
+    const fdot=fx*BX[i]+fy*BY[i]+fz*BZ[i];
+    DVX[i]+=(fx-fdot*BX[i])*flowStr;
+    DVY[i]+=(fy-fdot*BY[i])*flowStr;
+    DVZ[i]+=(fz-fdot*BZ[i])*flowStr;
+
+    DVX[i]+=-DX[i]*springK; DVY[i]+=-DY[i]*springK; DVZ[i]+=-DZ[i]*springK;
+    DVX[i]*=springD; DVY[i]*=springD; DVZ[i]*=springD;
+    DX[i]+=DVX[i]; DY[i]+=DVY[i]; DZ[i]+=DVZ[i];
+  }
+}
+
+function draw() {
+  const n=M.n;
+  ctx.fillStyle='#000';
+  ctx.fillRect(0,0,W,H);
+
+  for(let i=0;i<n;i++) ORD[i]=i;
+  ORD.subarray(0,n).sort((a,b)=>SZ_t[a]-SZ_t[b]);
+
+  const fA=M.frontAlpha, bA=M.backAlpha;
+  const fSz=M.frontSize, bSz=M.backSize;
+
+  for (let k=0;k<n;k++) {
+    const i=ORD[k];
+    const t=(SZ_t[i]+1)*0.5;
+    const bDist=Math.sqrt(BX[i]*BX[i]+BY[i]*BY[i]+BZ[i]*BZ[i]);
+    const fade=bDist>1.05?Math.max(0.08,1-(bDist-1.05)*0.7):1.0;
+    ctx.globalAlpha=(bA+(fA-bA)*t)*fade;
+    ctx.fillStyle=t<0.5?'#9aaebb':'#d8d8d8';
+    const sz=(bSz+(fSz-bSz)*t*PSZ[i])*Math.min(1,fade+0.3);
+    ctx.fillRect(SX_t[i]-sz*0.5, SY_t[i]-sz*0.5, sz, sz);
+  }
+  ctx.globalAlpha=1;
+}
+
+function loop(){ requestAnimationFrame(loop); update(); draw(); }
+init(); loop();
+
+function setMode(m){
+  M=MODES[m];
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',['a','b'][i]===m));
+  R=Math.min(W,H)*M.radius;
+  rotY=rotX=rotYVel=rotXVel=0;
+  init();
+}
+</script>
+</body>
+</html>
