@@ -133,9 +133,9 @@ function update() {
     // Mouse repulsion
     const mdx = b.x - mouse.x, mdy = b.y - mouse.y;
     const md2 = mdx*mdx + mdy*mdy;
-    if (md2 < 120*120 && md2 > 0.01) {
+    if (md2 < 200*200 && md2 > 0.01) {
       const md = Math.sqrt(md2);
-      const str = (1 - md/120) * 3;
+      const str = (1 - md/120) * 0.15;
       vx += (mdx/md) * str;
       vy += (mdy/md) * str;
     }
