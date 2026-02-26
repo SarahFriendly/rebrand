@@ -33,7 +33,7 @@ const MODES = {
     // Visual
     frontAlpha: 0.99,
     backAlpha:  0.99,
-    frontSize:  1.0,
+    frontSize:  2.0,
     backSize:   0.5,
   }
 };
@@ -210,6 +210,51 @@ function draw() {
 
 function loop(){ requestAnimationFrame(loop); update(); draw(); }
 init(); loop();
+
+// Export canvas to SVG on 's' key press
+window.addEventListener('keydown', e => {
+  if (e.code === 'KeyS') {
+    exportToSVG();
+  }
+});
+
+function exportToSVG() {
+  const n = M.n;
+  let svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<rect width="${W}" height="${H}" fill="black"/>`;
+  
+  const fA = M.frontAlpha, bA = M.backAlpha;
+  const fSz = M.frontSize, bSz = M.backSize;
+  
+  // Draw particles in the same order as the render
+  for (let k = 0; k < n; k++) {
+    const i = ORD[k];
+    const t = (SZ_t[i] + 1) * 0.5;
+    const bDist = Math.sqrt(BX[i]*BX[i] + BY[i]*BY[i] + BZ[i]*BZ[i]);
+    const fade = bDist > 1.05 ? Math.max(0.08, 1 - (bDist - 1.05) * 0.7) : 1.0;
+    const alpha = (bA + (fA - bA) * t) * fade;
+    const color = t < 0.5 ? '#FF00BB' : '#ffffff';
+    const sz = (bSz + (fSz - bSz) * t * PSZ[i]) * Math.min(1, fade + 0.3);
+    
+    // Convert alpha to hex opacity
+    const opacityStr = alpha.toFixed(2);
+    const x = SX_t[i] - sz * 0.5;
+    const y = SY_t[i] - sz * 0.5;
+    
+    svg += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${sz.toFixed(2)}" height="${sz.toFixed(2)}" fill="${color}" opacity="${opacityStr}"/>`;
+  }
+  
+  svg += `</svg>`;
+  
+  // Trigger download
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `sphere-${Date.now()}.svg`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 </script>
 </body>
