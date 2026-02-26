@@ -24,23 +24,23 @@ canvas { display:block; }
 
 const MODES = {
   a: { 
-    n:2000, // number of boids/particles
+    n:5000, // number of boids/particles
 
     // Boid behaviour parameters
-    sep:15, // Separation - how much they want to avoid crowding neighbors
-    ali:70, // Alignment - how much they want to match velocity with neighbors
-    coh:1, // Cohesion - how much they want to move toward the average position of neighbors
+    sep:10, // Separation - how much they want to avoid crowding neighbors
+    ali:200, // Alignment - how much they want to match velocity with neighbors
+    coh:10, // Cohesion - how much they want to move toward the average position of neighbors
     
     // Initial speed along ellipse (creates natural rotation/flow)
-    speed:0.9,
+    speed:1.5,
     
     // Center gravity & avoidance — pull and push away from very center (creates overall cohesion)
-    gravityStr: 90, // strength of pull toward center (creates overall cohesion)
-    avoidR: 800, // radius of center avoidance
-    avoidStr: 0.0001, // strength of center avoidance
+    gravityStr: 0.5, // strength of pull toward center (creates overall cohesion)
+    avoidR: 10, // radius of center avoidance
+    avoidStr: 0.00001, // strength of center avoidance
     
     // Visualization
-    radiusMin: 0.5,
+    radiusMin: 0.8,
     radiusMax: 2.0,
     colorMin: '#FF00BB',
     colorMax: '#ffffff'
