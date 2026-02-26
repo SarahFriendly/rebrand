@@ -32,20 +32,47 @@ const MODES = {
     coh:1, // Cohesion - how much they want to move toward the average position of neighbors
     
     // Initial speed along ellipse (creates natural rotation/flow)
-    speed:0.8,
+    speed:0.9,
     
     // Center gravity & avoidance — pull and push away from very center (creates overall cohesion)
-    gravityStr: 100, // strength of pull toward center (creates overall cohesion)
+    gravityStr: 90, // strength of pull toward center (creates overall cohesion)
     avoidR: 800, // radius of center avoidance
-    avoidStr: 0.0001 // strength of center avoidance
+    avoidStr: 0.0001, // strength of center avoidance
+    
+    // Visualization
+    radiusMin: 0.5,
+    radiusMax: 2.0,
+    colorMin: '#FF00BB',
+    colorMax: '#ffffff'
 },
 };
 
 let mode = MODES.a;
+
+// Interpolate between two hex colors
+function interpolateColor(hexA, hexB, t) {
+  const a = parseInt(hexA.slice(1), 16);
+  const b = parseInt(hexB.slice(1), 16);
+  
+  const ar = (a >> 16) & 255;
+  const ag = (a >> 8) & 255;
+  const ab = a & 255;
+  
+  const br = (b >> 16) & 255;
+  const bg = (b >> 8) & 255;
+  const bb = b & 255;
+  
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  
+  return `rgb(${r},${g},${bl})`;
+}
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W, H, cx, cy;
 let boids = [];
+let neighbourCount = [];
 let mouse = {x:-9999, y:-9999};
 
 function resize() {
@@ -66,6 +93,7 @@ canvas.addEventListener('mouseleave', () => { mouse.x = -9999; mouse.y = -9999; 
 // Initialize boids in a wide flat ellipse matching the reference shape
 function init() {
   boids = [];
+  neighbourCount = [];
   const n = mode.n;
   for (let i = 0; i < n; i++) {
     // Place on a hollow ellipse ring with scatter — matches reference shape
@@ -87,7 +115,7 @@ function init() {
 init();
 
 // Spatial grid for O(n) neighbour lookup
-const CELL = 100;
+const CELL = 20;
 let grid = {};
 
 function buildGrid() {
@@ -143,6 +171,7 @@ function update() {
     // Boid neighbours
     const neighbours = getNeighbours(b, COH);
     let sx=0,sy=0, ax=0,ay=0, cx2=0,cy2=0, sepN=0,aliN=0,cohN=0;
+    let totalNeighbours = 0;
 
     for (const j of neighbours) {
       if (j === i) continue;
@@ -151,6 +180,7 @@ function update() {
       const d2 = dx*dx + dy*dy;
       if (d2 < 0.01) continue;
       const d = Math.sqrt(d2);
+      totalNeighbours++;
 
       if (d < SEP) {
         // Separation
@@ -167,6 +197,8 @@ function update() {
         cohN++;
       }
     }
+
+    neighbourCount[i] = totalNeighbours;
 
     if (sepN > 0) { vx += sx/sepN * 0.15; vy += sy/sepN * 0.15; }
     if (aliN > 0) { vx += ax/aliN * 0.08; vy += ay/aliN * 0.08; }
@@ -200,14 +232,25 @@ function draw() {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
 
-  // Draw all dots in one batch
-  ctx.fillStyle = 'rgba(255,255,255,1.0)';
-  ctx.beginPath();
-  for (const b of boids) {
-    ctx.moveTo(b.x + 1, b.y);
-    ctx.arc(b.x, b.y, 1.5, 0, Math.PI*2);
+  // Find max neighbor count for normalization
+  let maxNeighbours = Math.max(...neighbourCount);
+  if (maxNeighbours === 0) maxNeighbours = 1;
+
+  // Draw all dots with size and color based on neighbor count
+  for (let i = 0; i < boids.length; i++) {
+    const b = boids[i];
+    // Gradient from 0 to 1 based on neighbor count
+    const gradient = neighbourCount[i] / maxNeighbours;
+    
+    // Size and color based on shared constants
+    const radius = mode.radiusMin + gradient * (mode.radiusMax - mode.radiusMin);
+    const color = interpolateColor(mode.colorMin, mode.colorMax, gradient);
+    
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, radius, 0, Math.PI*2);
+    ctx.fill();
   }
-  ctx.fill();
 }
 
 function loop() {
@@ -235,8 +278,17 @@ function exportToSVG() {
   let svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">`;
   svg += `<rect width="${W}" height="${H}" fill="black"/>`;
   
-  for (const b of boids) {
-    svg += `<circle cx="${b.x.toFixed(2)}" cy="${b.y.toFixed(2)}" r="1.5" fill="white"/>`;
+  // Find max neighbor count for normalization
+  let maxNeighbours = Math.max(...neighbourCount);
+  if (maxNeighbours === 0) maxNeighbours = 1;
+  
+  for (let i = 0; i < boids.length; i++) {
+    const b = boids[i];
+    const gradient = neighbourCount[i] / maxNeighbours;
+    const radius = mode.radiusMin + gradient * (mode.radiusMax - mode.radiusMin);
+    const color = interpolateColor(mode.colorMin, mode.colorMax, gradient);
+    
+    svg += `<circle cx="${b.x.toFixed(2)}" cy="${b.y.toFixed(2)}" r="${radius.toFixed(2)}" fill="${color}"/>`;
   }
   
   svg += `</svg>`;
