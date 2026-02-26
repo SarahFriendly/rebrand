@@ -222,6 +222,34 @@ function setMode(m) {
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('on', ['a','b'][i]===m));
   init();
 }
+
+// Export canvas to SVG on 's' key press
+window.addEventListener('keydown', e => {
+  if (e.code === 'KeyS') {
+    exportToSVG();
+  }
+});
+
+function exportToSVG() {
+  // Create SVG with current boid positions
+  let svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<rect width="${W}" height="${H}" fill="black"/>`;
+  
+  for (const b of boids) {
+    svg += `<circle cx="${b.x.toFixed(2)}" cy="${b.y.toFixed(2)}" r="1.5" fill="white"/>`;
+  }
+  
+  svg += `</svg>`;
+  
+  // Trigger download
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `flock-${Date.now()}.svg`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 </script>
 </body>
 </html>
