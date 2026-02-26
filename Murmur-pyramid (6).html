@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>flocks — pyramid</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; cursor:none; }
+canvas { display:block; }
+#ui {
+  position:fixed; top:0; left:0; right:0; height:36px;
+  display:flex; align-items:center; padding:0 16px; gap:16px;
+  background:rgba(238,233,222,0.97); font:13px system-ui; z-index:10;
+}
+</style>
+</head>
+<body>
+<div id="ui"><span style="color:#111;font-size:13px">flocks — pyramid</span></div>
+<canvas id="c"></canvas>
+<script>
+
+const CFG = {
+  n:          5000,
+  radius:     0.33,
+  spinSpd:    0.0013,
+  pushStr:    0.0008,
+  hoverR:     120,
+  flowStr:    0.00055,
+  flowScale:  0.016,
+  flowSpeed:  0.00025,
+  springK:    0.012,
+  springD:    0.96,
+  dragSens:   0.007,
+  inertiaDamp:0.92,
+  frontAlpha: 0.95,
+  backAlpha:  0.58,
+  frontSize:  1.8,
+  backSize:   1.1,
+};
+
+const APEX = [0, -1.05, 0];
+const BASE = [
+  [ 0.62,  0.55,  0.62],
+  [-0.62,  0.55,  0.62],
+  [-0.62,  0.55, -0.62],
+  [ 0.62,  0.55, -0.62],
+];
+const FACES = [
+  [APEX, BASE[0], BASE[1]],
+  [APEX, BASE[1], BASE[2]],
+  [APEX, BASE[2], BASE[3]],
+  [APEX, BASE[3], BASE[0]],
+];
+
+function randOnTriangleBiased(A, B, C) {
+  if (Math.random() < 0.93) {
+    const edge = Math.floor(Math.random()*3);
+    const verts = [A, B, C];
+    const p1=verts[edge], p2=verts[(edge+1)%3], p3=verts[(edge+2)%3];
+    const t = Math.random();
+    const spread = Math.random()*Math.random()*0.05;
+    return [
+      p1[0]*(1-t)+p2[0]*t + (p3[0]-(p1[0]+p2[0])*0.5)*spread,
+      p1[1]*(1-t)+p2[1]*t + (p3[1]-(p1[1]+p2[1])*0.5)*spread,
+      p1[2]*(1-t)+p2[2]*t + (p3[2]-(p1[2]+p2[2])*0.5)*spread,
+    ];
+  } else {
+    return randOnTriangle(A, B, C);
+  }
+}
+
+function randOnTriangle(A, B, C) {
+  let u = Math.random(), v = Math.random();
+  if (u + v > 1) { u = 1-u; v = 1-v; }
+  return [
+    A[0] + u*(B[0]-A[0]) + v*(C[0]-A[0]),
+    A[1] + u*(B[1]-A[1]) + v*(C[1]-A[1]),
+    A[2] + u*(B[2]-A[2]) + v*(C[2]-A[2]),
+  ];
+}
+
+function randOnPyramid() {
+  return randOnTriangleBiased(...FACES[Math.floor(Math.random()*4)]);
+}
+
+const M = CFG;
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+let W=0, H=0, CX=0, CY=0, R=0;
+
+let BX, BY, BZ, DX, DY, DZ, DVX, DVY, DVZ, PHX, PHY, PHZ, PSZ;
+let SX_t, SY_t, SZ_t, ORD;
+
+function alloc(n) {
+  BX=new Float32Array(n); BY=new Float32Array(n); BZ=new Float32Array(n);
+  DX=new Float32Array(n); DY=new Float32Array(n); DZ=new Float32Array(n);
+  DVX=new Float32Array(n);DVY=new Float32Array(n);DVZ=new Float32Array(n);
+  PHX=new Float32Array(n);PHY=new Float32Array(n);PHZ=new Float32Array(n);
+  PSZ=new Uint8Array(n); SX_t=new Float32Array(n); SY_t=new Float32Array(n);
+  SZ_t=new Float32Array(n); ORD=new Int32Array(n);
+}
+
+function resize() {
+  W=canvas.width=window.innerWidth;
+  H=canvas.height=window.innerHeight-36;
+  canvas.style.marginTop='36px';
+  CX=W/2; CY=H/2;
+  R=Math.min(W,H)*M.radius;
+}
+resize();
+window.addEventListener('resize', ()=>{ resize(); });
+
+const mouse={x:-9999,y:-9999};
+let dragging=false, lastMX=0, lastMY=0;
+let rotY=0, rotX=0, rotYVel=0, rotXVel=0;
+let tick=0;
+
+canvas.addEventListener('mousedown',  e=>{ dragging=true; rotYVel=rotXVel=0; const r=canvas.getBoundingClientRect(); lastMX=e.clientX-r.left; lastMY=e.clientY-r.top; });
+canvas.addEventListener('mouseup',    ()=>{ dragging=false; });
+canvas.addEventListener('mouseleave', ()=>{ mouse.x=-9999; mouse.y=-9999; dragging=false; });
+canvas.addEventListener('mousemove',  e=>{
+  const r=canvas.getBoundingClientRect();
+  const mx=e.clientX-r.left, my=e.clientY-r.top;
+  if (dragging) { rotYVel=(mx-lastMX)*M.dragSens; rotXVel=(my-lastMY)*M.dragSens; rotY+=rotYVel; rotX+=rotXVel; }
+  lastMX=mouse.x=mx; lastMY=mouse.y=my;
+});
+canvas.addEventListener('touchstart', e=>{ e.preventDefault(); const r=canvas.getBoundingClientRect(); lastMX=mouse.x=e.touches[0].clientX-r.left; lastMY=mouse.y=e.touches[0].clientY-r.top; dragging=true; rotYVel=rotXVel=0; },{passive:false});
+canvas.addEventListener('touchmove',  e=>{
+  e.preventDefault(); const r=canvas.getBoundingClientRect();
+  const mx=e.touches[0].clientX-r.left, my=e.touches[0].clientY-r.top;
+  if(dragging){ rotYVel=(mx-lastMX)*M.dragSens; rotXVel=(my-lastMY)*M.dragSens; rotY+=rotYVel; rotX+=rotXVel; }
+  lastMX=mouse.x=mx; lastMY=mouse.y=my;
+},{passive:false});
+canvas.addEventListener('touchend', ()=>{ dragging=false; });
+
+function init() {
+  const n=M.n;
+  alloc(n);
+  R=Math.min(W,H)*M.radius;
+
+  for (let i=0;i<n;i++) {
+    const [px,py,pz] = randOnPyramid();
+    const dist = Math.random() < 0.08 ? 1.15+Math.random()*0.85 : 1.0;
+    BX[i]=px*dist; BY[i]=py*dist; BZ[i]=pz*dist;
+    DX[i]=DY[i]=DZ[i]=0;
+    DVX[i]=DVY[i]=DVZ[i]=0;
+    PHX[i]=Math.random()*Math.PI*2;
+    PHY[i]=Math.random()*Math.PI*2;
+    PHZ[i]=Math.random()*Math.PI*2;
+    PSZ[i]=Math.random()<0.72?1:2;
+  }
+}
+
+function roty(x,y,z,a){ const c=Math.cos(a),s=Math.sin(a); return[c*x+s*z,y,-s*x+c*z]; }
+function rotx(x,y,z,a){ const c=Math.cos(a),s=Math.sin(a); return[x,c*y-s*z,s*y+c*z]; }
+
+function update() {
+  tick++;
+  if (!dragging) { rotYVel*=M.inertiaDamp; rotXVel*=M.inertiaDamp; rotY+=M.spinSpd+rotYVel; rotX+=rotXVel; }
+  rotX=Math.max(-0.5,Math.min(0.5,rotX));
+
+  const{springK,springD,flowStr,flowScale,flowSpeed,hoverR,pushStr}=M;
+  const hoverR2=hoverR*hoverR;
+  const n=M.n;
+
+  for (let i=0;i<n;i++) {
+    const wx=BX[i]+DX[i], wy=BY[i]+DY[i], wz=BZ[i]+DZ[i];
+    let[rx2,ry2,rz2]=roty(wx,wy,wz,rotY);
+    [rx2,ry2,rz2]=rotx(rx2,ry2,rz2,rotX);
+    const sx=CX+rx2*R, sy=CY+ry2*R;
+    SX_t[i]=sx; SY_t[i]=sy; SZ_t[i]=rz2;
+
+    if (mouse.x > -999) {
+      const mdx=sx-mouse.x, mdy=sy-mouse.y, md2=mdx*mdx+mdy*mdy;
+      if (md2<hoverR2&&md2>0.01) {
+        const md=Math.sqrt(md2), norm=1-md/hoverR;
+        const t=norm*norm*norm*pushStr;
+        const px2=mdx/md*t, py2=mdy/md*t;
+        let[ppx,ppy,ppz]=rotx(px2,py2,0,-rotX);
+        [ppx,ppy,ppz]=roty(ppx,ppy,ppz,-rotY);
+        const bLen=Math.sqrt(BX[i]*BX[i]+BY[i]*BY[i]+BZ[i]*BZ[i])||1;
+        const bnx=BX[i]/bLen,bny=BY[i]/bLen,bnz=BZ[i]/bLen;
+        const dot=ppx*bnx+ppy*bny+ppz*bnz;
+        DVX[i]+=(ppx-dot*bnx); DVY[i]+=(ppy-dot*bny); DVZ[i]+=(ppz-dot*bnz);
+      }
+    }
+
+    // per-particle drift
+    const dt=tick*0.00018;
+    DVX[i]+=Math.sin(dt*1.3+PHX[i]*7.1)*Math.cos(dt*0.7+PHY[i]*5.3)*0.00025;
+    DVY[i]+=Math.sin(dt*0.9+PHY[i]*6.7)*Math.cos(dt*1.1+PHZ[i]*4.9)*0.00025;
+    DVZ[i]+=Math.sin(dt*1.1+PHZ[i]*5.9)*Math.cos(dt*0.8+PHX[i]*6.3)*0.00025;
+
+    const dMag2=DX[i]*DX[i]+DY[i]*DY[i]+DZ[i]*DZ[i];
+    if (dMag2>0.10*0.10){ const sc=0.10/Math.sqrt(dMag2); DX[i]*=sc;DY[i]*=sc;DZ[i]*=sc; }
+
+    const t2=tick*flowSpeed;
+    const fpx=BX[i]*flowScale, fpy=BY[i]*flowScale, fpz=BZ[i]*flowScale;
+    const fx=Math.sin(fpy*3.1+t2*1.7+PHX[i])*Math.cos(fpz*2.3+t2*0.9);
+    const fy=Math.sin(fpz*2.7+t2*1.3+PHY[i])*Math.cos(fpx*3.7+t2*1.1);
+    const fz=Math.sin(fpx*3.3+t2*0.8+PHZ[i])*Math.cos(fpy*2.1+t2*1.5);
+    const bLen=Math.sqrt(BX[i]*BX[i]+BY[i]*BY[i]+BZ[i]*BZ[i])||1;
+    const bnx=BX[i]/bLen,bny=BY[i]/bLen,bnz=BZ[i]/bLen;
+    const fdot=fx*bnx+fy*bny+fz*bnz;
+    DVX[i]+=(fx-fdot*bnx)*flowStr;
+    DVY[i]+=(fy-fdot*bny)*flowStr;
+    DVZ[i]+=(fz-fdot*bnz)*flowStr;
+
+    DVX[i]+=-DX[i]*springK; DVY[i]+=-DY[i]*springK; DVZ[i]+=-DZ[i]*springK;
+    DVX[i]*=springD; DVY[i]*=springD; DVZ[i]*=springD;
+    DX[i]+=DVX[i]; DY[i]+=DVY[i]; DZ[i]+=DVZ[i];
+  }
+}
+
+function roundedTriangle(cx, cy, r, angle, cornerR) {
+  const verts = [];
+  for (let k=0;k<3;k++) {
+    const a = angle + k*Math.PI*2/3 - Math.PI/2;
+    verts.push([cx+Math.cos(a)*r, cy+Math.sin(a)*r]);
+  }
+  ctx.beginPath();
+  for (let k=0;k<3;k++) {
+    const prev=verts[(k+2)%3], curr=verts[k], next=verts[(k+1)%3];
+    const ax=curr[0]-prev[0], ay=curr[1]-prev[1];
+    const bx=next[0]-curr[0], by=next[1]-curr[1];
+    const aLen=Math.sqrt(ax*ax+ay*ay);
+    const bLen=Math.sqrt(bx*bx+by*by);
+    const cr=Math.min(cornerR, aLen*0.45, bLen*0.45);
+    const p1x=curr[0]-ax/aLen*cr, p1y=curr[1]-ay/aLen*cr;
+    const p2x=curr[0]+bx/bLen*cr, p2y=curr[1]+by/bLen*cr;
+    if (k===0) ctx.moveTo(p1x,p1y); else ctx.lineTo(p1x,p1y);
+    ctx.quadraticCurveTo(curr[0],curr[1],p2x,p2y);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function draw() {
+  const n=M.n;
+  ctx.fillStyle='#000';
+  ctx.fillRect(0,0,W,H);
+
+  for(let i=0;i<n;i++) ORD[i]=i;
+  ORD.subarray(0,n).sort((a,b)=>SZ_t[a]-SZ_t[b]);
+
+  const fA=M.frontAlpha, bA=M.backAlpha;
+  const fSz=M.frontSize, bSz=M.backSize;
+
+  for (let k=0;k<n;k++) {
+    const i=ORD[k];
+    const t=(SZ_t[i]+1)*0.5;
+    const bDist=Math.sqrt(BX[i]*BX[i]+BY[i]*BY[i]+BZ[i]*BZ[i]);
+    const fade=bDist>1.05?Math.max(0.06,1-(bDist-1.05)*0.8):1.0;
+    ctx.globalAlpha=(bA+(fA-bA)*t)*fade;
+    ctx.fillStyle=t<0.5?'#9aaebb':'#d8d8d8';
+    const sz=(bSz+(fSz-bSz)*t)*(PSZ[i]===2?1.5:1.0);
+    const dx=SX_t[i]-CX, dy=SY_t[i]-CY;
+    roundedTriangle(SX_t[i], SY_t[i], sz, Math.atan2(dy,dx)+Math.PI/2, sz*0.18);
+  }
+  ctx.globalAlpha=1;
+}
+
+function loop(){ requestAnimationFrame(loop); update(); draw(); }
+init(); loop();
+</script>
+</body>
+</html>
